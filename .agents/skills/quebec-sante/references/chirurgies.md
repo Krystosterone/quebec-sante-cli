@@ -61,7 +61,11 @@ semantics, see [`cli-chirurgies.md`](cli-chirurgies.md).
    One period is noise. Before calling a trend, look at 3–4 periods
    (`--years 3` for the same period across fiscal years, `--periods` for
    consecutive ones) and say so. `--years` compares like with like, since
-   waitlists move with the season; name any year listed in `notInSource`.
+   waitlists move with the season; name any period listed in `notInSource`.
+   `deltaFromPreviousPeriod` compares with `previousPeriod`, the last period
+   MSSS published. When `missingPeriods` isn't empty, MSSS skipped the
+   periods in it, and the delta covers `missingPeriods.length + 1` periods:
+   say so ("since P02; MSSS published no P03"), never "in one period".
    For one specialty, quote that specialty's own
    `specialties[].deltaFromPreviousPeriod`. The region-level
    `deltaFromPreviousPeriod` is all specialties, even with `--specialty`, so

@@ -136,17 +136,30 @@ For a general ER-occupancy question, apply these rules:
     packed is a weaker pattern. It describes past crowding, not a promise of a
     shorter wait, and it's never a reason to delay care for a possible
     emergency.
-12. **Check the sample size before trusting a slot.** Each profile row has
-    `samples`; with fewer than ~3 per slot (a short `--days`, or a window that
-    falls in the archive's hole from 2025-11-01 to 2026-11-05), say the history
-    is thin. Judge coverage from `window.snapshots` (about 24 a day when
-    complete), not `window.archiveStart`, the oldest snapshot overall.
+12. **Check the sample size and the coverage before trusting a slot.** Each
+    profile row has `samples`; with fewer than ~3 per slot, say the history is
+    thin. The archive always has gaps, at times nobody can predict, so never
+    assume a window is full and never carry gap dates from an earlier answer:
+    read this call's `window.snapshots` against
+    `window.coverage.expectedSnapshots`, and its `window.coverage.gaps`. When
+    gaps cover much of the window, say how much history it really holds ("112
+    of the 672 hourly snapshots, in two stretches") rather than calling it
+    "the last 28 days". To pick a window that reaches real
+    data, read `archive.gaps` (any call shows it). Name a missing span for
+    what it is: "the archive has no snapshot from … to …", never "MSSS
+    reported nothing" (the archive can't tell a missed fetch from a skipped
+    publication). An ER with `snapshots.notReporting` or `snapshots.absent`
+    is a different thing: the file was archived, and MSSS listed it with
+    blanks or left it out.
 13. **"Is now unusual?" = `latest.deltaFromTypicalPct`.** Treat roughly ±10
     points as normal; +10 to +20 is "somewhat busier"; +20 or more is "busier
     than usual for this hour"; −20 or less is "quieter than usual". Only once
     enough other snapshots back the typical value (rule 12). `latest.dataDate` is the archive's latest
-    snapshot, which can lag the live file by up to an hour; for "right now",
-    pair it with a live `urgences` call.
+    snapshot, which usually lags the live file by up to an hour, and by much
+    more while the archive job is down; for "right now", pair it with a live
+    `urgences` call, and say so when `window.to` is hours behind its
+    `dataDate`. A long window can also mix stretches years apart: say which
+    ones the typical value covers (`window.coverage.ranges`).
 14. Hours are **Québec local time** (MSSS's `Mise_a_jour`). Say "around 15h",
     not "at 15:00 exactly": a snapshot stands for that hour.
 

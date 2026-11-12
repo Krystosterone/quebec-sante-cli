@@ -8,6 +8,9 @@ import {
   fetchChirurgiesReport,
   fetchChirurgiesMultiReport,
   buildChirurgiesMultiReport,
+  buildChirurgiesReport,
+  periodsBetween,
+  previousFiscalPeriod,
   selectPeriods,
   samePeriodYearsBack,
   decodePeriod,
@@ -209,11 +212,40 @@ test('--periods reports each period, in the order given, like a single-period ca
   }
 });
 
-test('--periods with an unknown period is a usage error', async () => {
+test('--periods: a period the source lacks is listed in notInSource; none present is a usage error', async () => {
+  const r = await fetchChirurgiesMultiReport({ fixture: FIXTURE, cache: freshCache(), filters: { periods: ['2627-P04', '2526-P04', '2627-P02'] } });
+  assert.deepEqual(r.periods, ['2627-P04', '2627-P02']);
+  assert.deepEqual(r.notInSource, ['2526-P04']);
+  assert.deepEqual(r.reports.map((x) => x.dataDate), ['2627-P04', '2627-P02']);
   await assert.rejects(
-    fetchChirurgiesMultiReport({ fixture: FIXTURE, cache: freshCache(), filters: { periods: ['2627-P04', '2526-P04'] } }),
+    fetchChirurgiesMultiReport({ fixture: FIXTURE, cache: freshCache(), filters: { periods: ['2526-P04', '2526-P03'] } }),
     /period 2526-P04 is not in the source/,
   );
+});
+
+test('previousFiscalPeriod and periodsBetween step fiscal periods, P01 back to P13', () => {
+  assert.equal(previousFiscalPeriod('2627-P04'), '2627-P03');
+  assert.equal(previousFiscalPeriod('2627-P01'), '2526-P13');
+  assert.equal(previousFiscalPeriod('nope'), null);
+  assert.deepEqual(periodsBetween('2627-P04', '2627-P03'), []);
+  assert.deepEqual(periodsBetween('2627-P02', '2526-P12'), ['2627-P01', '2526-P13']);
+  assert.deepEqual(periodsBetween('2627-P04', null), []);
+});
+
+test('a period MSSS skipped: missingPeriods names it and the delta compares with the last published one', () => {
+  // Drop 2627-P03 from the source, as if MSSS had never published it.
+  const { rows, periods } = parseChirurgies(readFileSync(FIXTURE, 'utf8'));
+  const kept = rows.filter((r) => r.period !== '2627-P03');
+  const avail = periods.filter((p) => p !== '2627-P03');
+  const meta = { cached: false, cacheAgeMinutes: 0 };
+  const gap = buildChirurgiesReport(kept, avail, { period: '2627-P04' }, meta);
+  assert.equal(gap.previousPeriod, '2627-P02');
+  assert.deepEqual(gap.missingPeriods, ['2627-P03']);
+  // P03's report compares with P02 too: same previous total, so the delta spans P02 → P04.
+  const p03 = buildChirurgiesReport(rows, periods, { period: '2627-P03' }, meta);
+  const mtl = (r: typeof gap) => r.regions.find((x) => x.code === 'RSS06')!;
+  assert.equal(mtl(gap).previousPeriodTotal, mtl(p03).previousPeriodTotal);
+  assert.deepEqual(buildChirurgiesReport(rows, periods, { period: '2627-P04' }, meta).missingPeriods, []);
 });
 
 test('samePeriodYearsBack steps fiscal years, across the century', () => {
@@ -275,7 +307,7 @@ test('CLI: chirurgies --periods / --years', () => {
     ['--years', '0'],
     ['--years', '14'],
     ['--years', 'x'],
-    ['--periods', '2627-P04,2526-P04'], // well-formed but absent
+    ['--periods', '2526-P04,2526-P03'], // well-formed, none in the source
   ]) {
     assert.equal(cli(['--json', ...bad]).code, 2, bad.join(' '));
   }

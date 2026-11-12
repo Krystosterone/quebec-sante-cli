@@ -114,31 +114,68 @@ repo (`archive/`), served by GitHub Pages at
 `--api` or `QUEBEC_SANTE_API_URL`). The window is the `--days` before the
 **latest archived snapshot**, not the wall clock. Every number is DERIVED from
 the snapshots in the window (mean/min/max, 1 decimal; nulls ignored).
-`--by` defaults to `hour`. `window.from` is `--days` back even where the archive
-has no data: `window.snapshots` says how much history the window really holds
-(about 24 a day when complete). `window.archiveStart` is the oldest snapshot
-overall (2023-02-01); there is none from 2025-11-01 to 2026-11-05. `latest.occupancyPct` keeps 1 decimal (87.5) where live
-`urgences` rounds to a whole percent (88); for "right now", quote the live
+`--by` defaults to `hour`. `latest.occupancyPct` keeps 1 decimal (87.5) where
+live `urgences` rounds to a whole percent (88); for "right now", quote the live
 figure.
+
+**The archive has gaps, and always will.** It's fetched by one computer, from
+cron, and MSSS sometimes skips or delays a publication, so hours or days can
+have no snapshot at all. `window.from` is `--days` back in calendar time
+whatever the archive holds. The output says what it holds; there's no list of
+gap dates to keep anywhere else:
+
+- `window.snapshots`: snapshots in the window, against
+  `window.coverage.expectedSnapshots` (`days` × 24, one an hour).
+- `window.coverage.ranges[]`: `{ from, to, snapshots }`, the runs of snapshots
+  with no gap over 6 h inside, oldest first.
+- `window.coverage.gaps[]`: `{ from, to, hours }`, every span over 6 h with no
+  snapshot, oldest first. `from` and `to` are the snapshots either side; the
+  first gap starts at `window.from` when the window opens before its first
+  snapshot. A gap of 6 h or less is MSSS's usual jitter, not listed.
+- `archive`: `{ first, last, snapshots, gaps }` for the whole archive,
+  whatever the window, so any call (`--days 1` is the cheapest) shows where
+  history exists. `gaps` is `null` from an API built before the field existed.
+  `window.archiveStart` equals `archive.first`.
+- A window with a gap writes one `note:` line on stderr; the JSON is unchanged.
+
+Three kinds of missing data, kept apart:
+
+| What's missing | Where it shows |
+|----------------|----------------|
+| **Nothing archived** for a span: the job missed it, or MSSS published nothing. The archive can't tell which. | `window.coverage.gaps`, `archive.gaps` |
+| **MSSS says the ER isn't reporting**: it's listed, every stretcher figure blank (live `available: false`) | facility `snapshots.notReporting`; counted in `samples`, ignored by the means |
+| **The ER isn't in the file at all** for a snapshot | facility `snapshots.absent`; not in `samples` |
+
+Each facility's `snapshots` (`reporting` + `notReporting` + `absent`) sums to
+`window.snapshots`.
 
 ```jsonc
 {
   "source": "https://krystosterone.github.io/quebec-sante-cli/api/v1",
   "generatedAt": "…",          // when the API was built from the archive
   "cached": false,
-  "window": { "from": "2026-10-06T21:45", "to": "2026-11-03T21:45", "days": 28,
-              "snapshots": 650, "archiveStart": "2026-11-03T21:45" },
+  "window": { "from": "2026-10-14T19:45", "to": "2026-11-11T19:45", "days": 28,
+              "snapshots": 141, "archiveStart": "2023-02-01T13:46",
+              "coverage": {
+                "expectedSnapshots": 672,
+                "ranges": [ { "from": "2026-11-03T22:45", "to": "2026-11-08T21:45", "snapshots": 120 },
+                            { "from": "2026-11-10T23:45", "to": "2026-11-11T19:45", "snapshots": 21 } ],
+                "gaps": [ { "from": "2026-10-14T19:45", "to": "2026-11-03T22:45", "hours": 483 },
+                          { "from": "2026-11-08T21:45", "to": "2026-11-10T23:45", "hours": 50 } ] } },
+  "archive": { "first": "2023-02-01T13:46", "last": "2026-11-11T19:45", "snapshots": 22998,
+               "gaps": [ { "from": "2023-02-03T13:46", "to": "2023-02-06T09:46", "hours": 68 }, … ] },
   "groupBy": "weekday-hour",
   "facilities": [{
     "id": "51222800", "name": "CHU SAINTE-JUSTINE", "region": "Montréal", "regionCode": "06",
-    "summary": { "samples": 650, "occupancyPctMean": 112.4, "occupancyPctMin": 50,
+    "snapshots": { "reporting": 137, "notReporting": 4, "absent": 0 },
+    "summary": { "samples": 141, "occupancyPctMean": 112.4, "occupancyPctMin": 50,
                  "occupancyPctMax": 175, "waitingForCareMean": 28.1,
                  "totalPresentMean": 61.3, "over24hMean": 0.4, "dmsStretcherMean": 7.2 },
-    "latest": { "dataDate": "2026-11-03T21:45", "occupancyPct": 125, "waitingForCare": 34,
+    "latest": { "dataDate": "2026-11-11T19:45", "occupancyPct": 125, "waitingForCare": 34,
                 "totalPresent": 79, "typicalOccupancyPct": 108.3,
                 "typicalOccupancyPctSameWeekday": 115, "deltaFromTypicalPct": 16.7 },
-    "profile": [ { "weekday": 1, "weekdayName": "Monday", "hour": 0, "samples": 4,
-                   "occupancyPctMean": 96.9, "occupancyPctMin": 87.5, "occupancyPctMax": 106.3,
+    "profile": [ { "weekday": 1, "weekdayName": "Monday", "hour": 0, "samples": 1,
+                   "occupancyPctMean": 96.9, "occupancyPctMin": 96.9, "occupancyPctMax": 96.9,
                    "waitingForCareMean": 9.5, "totalPresentMean": 31, "over24hMean": 0,
                    "dmsStretcherMean": 7.1 } ]
   }]
@@ -153,9 +190,11 @@ figure.
 - `latest.typicalOccupancyPct`: mean at the same hour over the rest of the
   window; `…SameWeekday`: same weekday and hour. `null` when there's no other
   sample.
-- Caching: the index and the current month for `--ttl` minutes (default 30);
-  complete months are kept indefinitely (they never change). `--refresh`
-  re-fetches the index and the current month only.
+- Caching: the index and the current month for `--ttl` minutes (default 30).
+  A complete month (one the live archive no longer adds to) stays cached while
+  it matches its index entry (snapshot count, first, last); a backfill changes
+  that, and the month is fetched again. `--refresh` re-fetches the index and
+  the current month.
 - Exit codes: `1` when the API can't be reached (HTTP 404 means Pages isn't
   deployed yet), `2` for a bad `--days`/`--by` or a document that doesn't match
   schema 1.

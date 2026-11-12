@@ -10,7 +10,11 @@
  *
  * Months are keyed by the snapshot's own `Mise_a_jour` (Québec local time, as
  * MSSS publishes it). A month before the latest snapshot's month is
- * `complete` and never changes again, so clients may cache it indefinitely.
+ * `complete`: the live archive no longer adds to it. A backfill still can, so a
+ * client keeps a cached complete month only while it matches the index entry.
+ *
+ * The archive always has gaps (the job runs on one computer; MSSS skips or
+ * delays publications), so the index lists every gap over GAP_HOURS.
  */
 import { parseUrgences } from './parse';
 import { MSSS_URGENCES_URL } from './source';
@@ -33,6 +37,38 @@ export const HISTORY_FIELDS = [
 ] as const;
 export type HistoryField = (typeof HISTORY_FIELDS)[number];
 
+/**
+ * A span between two consecutive archived snapshots longer than GAP_HOURS:
+ * nothing was archived in it, whether the job missed it or MSSS published
+ * nothing (the archive can't tell which).
+ */
+export interface HistoryGap {
+  /** Last snapshot before the gap (YYYY-MM-DDTHH:MM, Québec local time). */
+  from: string;
+  /** First snapshot after it. */
+  to: string;
+  /** Wall-clock hours between them, 1 decimal. */
+  hours: number;
+}
+
+/** MSSS publishes hourly; a longer silence than this counts as a gap. */
+export const GAP_HOURS = 6;
+
+/** Hours between two naive local stamps (wall clock, so ±1 across a DST change). */
+export function hoursBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}:00Z`) - Date.parse(`${a}:00Z`)) / 360_000) / 10;
+}
+
+/** Gaps over GAP_HOURS between consecutive snapshots of an ascending list. */
+export function findGaps(snapshots: readonly string[]): HistoryGap[] {
+  const gaps: HistoryGap[] = [];
+  for (let i = 1; i < snapshots.length; i++) {
+    const hours = hoursBetween(snapshots[i - 1]!, snapshots[i]!);
+    if (hours > GAP_HOURS) gaps.push({ from: snapshots[i - 1]!, to: snapshots[i]!, hours });
+  }
+  return gaps;
+}
+
 export interface HistoryFacility {
   /** MSSS permit number (stable id). */
   id: string;
@@ -53,7 +89,10 @@ export interface UrgencesHistoryMonth {
   dataset: 'urgences';
   source: string;
   month: string; // YYYY-MM
-  /** True once a later month has data: this document will not change again. */
+  /**
+   * True once a later month has data: the live archive no longer adds to it.
+   * A backfill can, so check `snapshots`/`first`/`last` against the index.
+   */
   complete: boolean;
   fields: readonly HistoryField[];
   /** Each snapshot's `Mise_a_jour` (YYYY-MM-DDTHH:MM, Québec local time), ascending, unique. */
@@ -83,6 +122,11 @@ export interface HistoryIndex {
       last: string | null;
       /** Archived versions that could not be parsed (skipped). */
       skippedVersions: number;
+      /**
+       * Every gap over GAP_HOURS between `first` and `last`, oldest first.
+       * Absent from APIs built before it existed.
+       */
+      gaps?: HistoryGap[];
       months: HistoryMonthEntry[];
     };
   };
@@ -184,6 +228,7 @@ export function buildHistory(
         first: snapshots[0] ?? null,
         last: snapshots[snapshots.length - 1] ?? null,
         skippedVersions: skipped,
+        gaps: findGaps(snapshots),
         months: months.map((m) => ({
           month: m.month,
           path: `urgences/${m.month}.json`,

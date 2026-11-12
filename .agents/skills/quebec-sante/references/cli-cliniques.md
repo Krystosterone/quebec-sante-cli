@@ -53,8 +53,8 @@ order within a date), `summary`.
 
 | Field | Meaning |
 |-------|---------|
-| `window` | `{ from, to, days }`: the calendar days reported, inclusive. `days` is 1 unless `--days` was given, and `to` equals `dataDate` |
-| `dates` | The dates in `window` that the source has rows for, newest first. A day in the window with no rows isn't listed, and isn't zero offers |
+| `window` | `{ from, to, days, missingDates }`: the calendar days reported, inclusive. `days` is 1 unless `--days` was given, and `to` equals `dataDate`. `missingDates` lists the window's days the source has no rows for at all, newest first: MSSS didn't publish them (or hasn't yet, past `availableRange.to`) |
+| `dates` | The dates in `window` that the source has rows for, newest first. `dates` and `window.missingDates` together are every day of the window. A missing day isn't zero offers |
 | `availableDates` | The newest 31 dates the source has, newest first: enough to pick any `--days` window that ends at the latest date. Not the whole source |
 | `availableRange` | `{ from, to, count }`: the oldest and newest dates in the source, and how many distinct dates it has |
 
@@ -80,7 +80,8 @@ DERIVED from the rows in `clinics[]`, so it follows the same filters and
 window. It counts and sums; it doesn't rank. A **clinic** is a `name` within
 its RTS and RLS. A **day with offers** is a date in `dates` with at least one
 appointment offered (in that band, for a band). "Every day" means on every
-date in `dates`, so state `dates.length` with it.
+date in `dates`, so state `dates.length` with it, and `window.missingDates`
+when it isn't empty.
 
 | Field | Meaning |
 |-------|---------|

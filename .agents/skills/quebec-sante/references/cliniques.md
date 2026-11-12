@@ -52,7 +52,8 @@ The report has `clinics[]` (each: `name`, `regionName`, `rlsName`, `rssCode`,
 `date`, `weekdayName`, `professionGroup`, `totalOffered`, and `slots` with six
 time bands `6h_9h, 9h_12h, 12h_15h, 15h_18h, 18h_21h, 21h_6h`), `dataDate`
 (the date of the appointments: the last day of the window), `window` (`from`,
-`to`, `days`), `dates` (the days in the window that have rows, newest first),
+`to`, `days`, and `missingDates`: the window's days the source has no rows
+for), `dates` (the days in the window that have rows, newest first),
 `availableDates` (the newest 31 dates in the source) and `availableRange`
 (the whole source). `null` slots = no appointments offered in that band.
 
@@ -75,6 +76,10 @@ codes, and cache semantics, see [`cli-cliniques.md`](cli-cliniques.md).
    `daysWithOffers` against `dates`), and counts of clinics from
    `summary.byProfessionGroup`, rather than counting rows yourself. State the
    window (`window.from` to `window.to`) and how many of its `dates` had data.
+   MSSS can leave a date out of the file: `window.missingDates` names it.
+   Say so ("MSSS published no data for Oct 27"), and don't count it as a day
+   without offers. "Every day" in the summary then means every day MSSS
+   published, so say "all 6 published days of the 7".
 3. **Time bands are the appointment's scheduled time.** A clinic that offered
    `18h_21h` slots on most recent days is one that does evening appointments.
    Don't call it open tonight.
