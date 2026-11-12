@@ -55,6 +55,28 @@ export function decodePeriod(code: string): ChirurgiePeriod {
   return { code, fiscalYear: `20${m[1]}-20${m[2]}`, number: Number(m[3]) };
 }
 
+/** The fiscal period before `code`: "2627-P01" → "2526-P13"; null when `code` isn't a period. */
+export function previousFiscalPeriod(code: string): string | null {
+  const m = /^(\d{2})(\d{2})-P(\d{2})$/.exec(code);
+  if (!m) return null;
+  const n = Number(m[3]);
+  if (n > 1) return `${m[1]}${m[2]}-P${String(n - 1).padStart(2, '0')}`;
+  return `${samePeriodYearsBack(code, 1).slice(0, 4)}-P13`;
+}
+
+/**
+ * The fiscal periods strictly between `previous` and `period` (newest first):
+ * the ones a delta from `previous` spans without the source having them.
+ */
+export function periodsBetween(period: string, previous: string | null): string[] {
+  if (!previous) return [];
+  const out: string[] = [];
+  for (let p = previousFiscalPeriod(period); p && p > previous && out.length <= 13 * 100; p = previousFiscalPeriod(p)) {
+    out.push(p);
+  }
+  return out;
+}
+
 /** Resolve a --specialty filter to the matching specialty keys (all when absent). */
 export function resolveSpecialties(filter: string | undefined): ChirurgieSpecialtyKey[] {
   if (!filter) return CHIRURGIE_SPECIALTIES.map((s) => s.key);
@@ -232,6 +254,7 @@ export function buildChirurgiesReport(
     dataDate: period,
     period: decodePeriod(period),
     previousPeriod,
+    missingPeriods: periodsBetween(period, previousPeriod),
     cached: meta.cached,
     cacheAgeMinutes: meta.cacheAgeMinutes,
     availablePeriods: periods,
@@ -259,11 +282,15 @@ export function selectPeriods(
     throw new UsageError('give either periods or years, not both');
   }
   if (filters.periods) {
-    const codes = [...new Set(filters.periods)];
-    if (codes.length === 0 || codes.length > CHIRURGIES_MAX_PERIODS) {
-      throw new UsageError(`periods takes 1 to ${CHIRURGIES_MAX_PERIODS} period codes (got ${codes.length})`);
+    const asked = [...new Set(filters.periods)];
+    if (asked.length === 0 || asked.length > CHIRURGIES_MAX_PERIODS) {
+      throw new UsageError(`periods takes 1 to ${CHIRURGIES_MAX_PERIODS} period codes (got ${asked.length})`);
     }
-    return { codes, notInSource: [] }; // an unknown code fails in buildChirurgiesReport, naming the available ones
+    // MSSS can skip a period: one the source lacks is listed, not fatal. If it
+    // has none of them, the first fails in buildChirurgiesReport, naming the available ones.
+    const codes = asked.filter((c) => available.includes(c));
+    if (codes.length === 0) return { codes: asked.slice(0, 1), notInSource: [] };
+    return { codes, notInSource: asked.filter((c) => !available.includes(c)) };
   }
   const years = filters.years;
   if (years === undefined || !Number.isInteger(years) || years < 1 || years > CHIRURGIES_MAX_PERIODS) {

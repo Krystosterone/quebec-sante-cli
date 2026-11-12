@@ -185,8 +185,12 @@ export function buildCliniquesReport(
     throw new UsageError(`days must be a whole number from 1 to ${CLINIQUES_MAX_DAYS} (got ${days})`);
   }
   const to = filters.date ?? dates[0]!;
-  const window = { from: shiftDate(to, days - 1), to, days };
-  const windowDates = dates.filter((d) => d >= window.from && d <= window.to);
+  const from = shiftDate(to, days - 1);
+  const windowDates = dates.filter((d) => d >= from && d <= to);
+  // MSSS can skip a date: name it, so "every day" (over `dates`) isn't read as the whole window.
+  const have = new Set(windowDates);
+  const missingDates = Array.from({ length: days }, (_, i) => shiftDate(to, i)).filter((d) => !have.has(d));
+  const window = { from, to, days, missingDates };
   const resolved = filters.region ? resolveRegion(filters.region) : null;
   // rssCode is re-derived so rows from a cache written before it existed carry it too.
   // Newest date first, the same order as availableDates; source order within a date.

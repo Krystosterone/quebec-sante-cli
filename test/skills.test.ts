@@ -97,6 +97,21 @@ test('no skill file contains a rule the M0 audit removed', () => {
   }
 });
 
+// Gaps come and go (the archive job stops, MSSS skips a publication), so the
+// rules read coverage from the CLI output and carry no dates of their own.
+// Example answers (`>` lines) may show one.
+test('the entry point, the answer standard and the modules hardcode no dates', () => {
+  const files = ['SKILL.md', 'references/answer-standard.md', ...MODULES.map((m) => join('references', `${m}.md`))];
+  for (const f of files) {
+    read(f)
+      .split('\n')
+      .forEach((line, i) => {
+        if (line.trimStart().startsWith('>')) return;
+        assert.ok(!/\b20\d\d-\d\d-\d\d\b/.test(line), `${f}:${i + 1} hardcodes a date: ${line.trim()}`);
+      });
+  }
+});
+
 test('the entry point and the ER modules put the emergency step and the triage caveat up front', () => {
   for (const f of ['SKILL.md', 'references/urgences.md', 'references/urgences-children.md']) {
     const body = read(f);

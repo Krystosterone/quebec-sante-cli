@@ -179,8 +179,11 @@ api/v1/urgences/<YYYY-MM>.json   every snapshot of the month, per facility
 
 `quebec-sante urgences-historique` reads it (contract:
 [`cli-urgences.md`](../.agents/skills/quebec-sante/references/cli-urgences.md#urgences-historique-history)).
-A month is `complete` once a later month has data, and clients cache complete
-months indefinitely. `pages.yml` runs on pushes to `main` that change
+A month is `complete` once a later month has data: the live archive no longer
+adds to it. A backfill still can, so `urgences-historique` keeps a cached
+complete month only while it matches the index entry (snapshot count, first,
+last). `index.json` also lists every gap over 6 h (`datasets.urgences.gaps`);
+see [Gaps](#gaps). `pages.yml` runs on pushes to `main` that change
 `archive/urgences/` or the builder, and on manual runs. A failed deploy is
 retried by the next data push, within the hour.
 
@@ -196,9 +199,31 @@ gzipped). GitHub Pages' soft limits (1 GB site, 100 GB/month bandwidth) leave
 years of headroom. With a custom Actions workflow, Pages' 10-builds-per-hour
 limit doesn't apply.
 
+## Gaps
+
+The archive will always have gaps. The job runs on one computer, which gets
+turned off, moved or forgotten (an infrastructure migration left one of
+about 50 hours), and MSSS skips or delays publications. Nothing schedules
+them, so nothing should hardcode them:
+
+- The builder lists every gap over 6 h between two snapshots in `index.json`,
+  and `urgences-historique` reports them (`archive.gaps`) along with the
+  ranges and gaps of each window (`window.coverage`). The skill reads them
+  from the output; it carries no gap dates.
+- A gap means nothing was archived. The archive can't tell a missed fetch
+  from an hour MSSS didn't publish: the job commits only when bytes change,
+  and keeps no record of its runs in `archive/`. The computer's log says
+  which, for its own runs.
+- An ER that MSSS lists with blank figures, or leaves out of a snapshot, isn't
+  a gap: the snapshot is archived and the facility's `snapshots` counts say
+  so.
+- `archive-freshness` fails while a gap is happening; that's the cue to
+  restart the job. A gap that's over can only be filled by a backfill of
+  MSSS's own bytes (see below), never by deriving or re-exporting data.
+
 ## Imported history
 
-The job started on 2026-11-05. The urgences versions from **2023-02-01 to
+The live archive starts on 2026-11-03 (Québec time). The urgences versions from **2023-02-01 to
 2025-11-01** (22,857 of them) come from
 [jlomako/quebec-emergency-rooms](https://github.com/jlomako/quebec-emergency-rooms)
 (MIT, © 2022 jlomako). Its GitHub Actions workflow ran `wget -N` on the same
@@ -219,7 +244,7 @@ GitHub's runners.
   drop every imported version. The builder reads history with
   `git log --full-history`, so versions that reach `main` through a merge are
   included (`test/history.test.ts`).
-- **Not imported:** the gap from 2025-11-01 to 2026-11-05. The only copies
+- **Not imported:** the gap from 2025-11-01 to 2026-11-03. The only copies
   of MSSS's own bytes found for it are two Wayback Machine captures
   (2026-01-14 and 2026-02-09), not yet imported. The other copies are
   re-exports (Données Québec datastore dumps, derived tables), which

@@ -123,7 +123,8 @@ Options:
                       --days, the last day of the window
   --days <n>          Report n calendar days ending at --date, in one call (1-${CLINIQUES_MAX_DAYS},
                       default 1). Rows come newest date first; "dates" lists the days present,
-                      and "summary" totals each clinic and professional group over the window
+                      "window.missingDates" the ones the source has no rows for, and "summary"
+                      totals each clinic and professional group over the dates present
   --refresh           Force a fresh fetch, ignoring the local cache
   --ttl <minutes>     Cache TTL (default 1440; the dataset updates weekly)
   --json              Output JSON (default when piped)
@@ -185,7 +186,11 @@ Options:
   --periods <list>     Several periods in one call, comma-separated, e.g. "2627-P04,2627-P03"
                        (up to ${CHIRURGIES_MAX_PERIODS}); output is { periods, reports[] }, one report per period
   --years <n>          The same period in each of the last n fiscal years, newest first
-                       (1-${CHIRURGIES_MAX_PERIODS}), e.g. 2627-P04, 2526-P04, 2425-P04; same output as --periods
+                       (1-${CHIRURGIES_MAX_PERIODS}), e.g. 2627-P04, 2526-P04, 2425-P04; same output as --periods.
+                       With either, a period the source lacks is listed in notInSource
+
+A period MSSS didn't publish is listed in missingPeriods; the deltas then
+compare with previousPeriod, the last one published before it.
   --refresh            Force a fresh fetch, ignoring the local cache
   --ttl <minutes>      Cache TTL (default ${CHIRURGIES_DEFAULT_TTL_MINUTES}; the source updates ~every 4 weeks)
   --json               Output JSON (default when piped)
@@ -429,10 +434,13 @@ function formatCliniquesTable(report: CliniquesReport): string {
   const when = multiDay
     ? `${report.window.from} → ${report.window.to} (${report.window.days} days, ${report.dates.length} with data)`
     : report.dataDate;
+  const notPublished = report.window.missingDates.length
+    ? `\nnot in the source: ${report.window.missingDates.join(', ')}`
+    : '';
   const range = report.availableRange;
   const meta =
     `source: ${report.source}\ndate: ${when} · ${report.cached ? 'cached' : 'live'} · fetched ${report.fetchedAt}\n` +
-    `available dates: ${range.from} → ${range.to} (${range.count} dates)`;
+    `available dates: ${range.from} → ${range.to} (${range.count} dates)${notPublished}`;
   return `${blocks.join('\n\n')}\n\n${meta}`;
 }
 
@@ -483,10 +491,16 @@ function chirurgiesPeriodBlocks(report: ChirurgiesPeriodReport): { blocks: strin
   const blocks = report.regions.map((r) => chirurgiesBlock(r, report.previousPeriod, showOverall));
   if (blocks.length === 0) blocks.push('No regions matched the filters.');
   blocks.push(chirurgiesBlock(report.province, report.previousPeriod, showOverall));
-  const missing = report.missingRegions.length
-    ? `missing from this period (not in province total): ${report.missingRegions.join(', ')}`
-    : '';
-  return { blocks, missing };
+  const notes = [
+    report.missingRegions.length
+      ? `missing from this period (not in province total): ${report.missingRegions.join(', ')}`
+      : '',
+    report.missingPeriods.length
+      ? `not in the source: ${report.missingPeriods.join(', ')}, so deltas vs ${report.previousPeriod} span ` +
+        `${report.missingPeriods.length + 1} periods`
+      : '',
+  ];
+  return { blocks, missing: notes.filter(Boolean).join('\n') };
 }
 
 function formatChirurgiesTable(report: ChirurgiesReport): string {
@@ -519,6 +533,11 @@ this repo (archive/), served by GitHub Pages. The window ends at the latest
 archived snapshot; hours are Québec local time (MSSS's Mise_a_jour). Every
 figure is a DERIVED mean/min/max over the snapshots in the window.
 
+The archive has gaps (hours or days with no snapshot). The window is calendar
+time either way: window.coverage lists the ranges it holds and every gap over
+6 h, archive.gaps every gap in the whole archive, and a note on stderr says
+when the window has one.
+
 Usage:
   quebec-sante urgences-historique [options]
 
@@ -530,7 +549,8 @@ Options:
   --by <grouping>      Profile grouping: hour (default), weekday-hour, or day
   --api <url>          History API base (default $QUEBEC_SANTE_API_URL, else
                        https://krystosterone.github.io/quebec-sante-cli/api/v1)
-  --refresh            Re-fetch the index and the current month (complete months stay cached)
+  --refresh            Re-fetch the index and the current month (complete months stay
+                       cached while they match the index)
   --ttl <minutes>      Cache TTL for the index and the current month (default ${HISTORY_DEFAULT_TTL_MINUTES})
   --json               Output JSON (default when piped)
   --table              Output a human-readable table (default on a TTY)
@@ -549,18 +569,30 @@ function profileLabel(row: UrgencesHistoriqueReport['facilities'][number]['profi
   return row.weekdayName ? `${row.weekdayName.slice(0, 3)} ${hour}` : hour;
 }
 
+/** One line on what the window holds: snapshots against the hourly count, ranges, gaps. */
+export function historiqueCoverageLine(report: UrgencesHistoriqueReport): string {
+  const c = report.window.coverage;
+  const gaps = c.gaps.length
+    ? ` · gaps over 6 h: ${c.gaps.map((g) => `${g.from} → ${g.to} (${g.hours} h)`).join(', ')}`
+    : ' · no gap over 6 h';
+  return `coverage: ${report.window.snapshots} of ${c.expectedSnapshots} hourly snapshots in ${c.ranges.length} range(s)${gaps}`;
+}
+
 /** Render a history report as one block per facility. */
 export function formatHistoriqueTable(report: UrgencesHistoriqueReport): string {
   const w = report.window;
   const head =
     `ER history · ${w.from} → ${w.to} (${w.days} days, ${w.snapshots} snapshots` +
-    `${w.archiveStart && w.archiveStart > w.from ? `; archive starts ${w.archiveStart}` : ''}) · by ${report.groupBy}`;
+    `${w.archiveStart && w.archiveStart > w.from ? `; archive starts ${w.archiveStart}` : ''}) · by ${report.groupBy}\n` +
+    historiqueCoverageLine(report);
   if (report.facilities.length === 0) return `${head}\n\nNo facilities matched the filters.`;
   const blocks = report.facilities.map((f) => {
     const s = f.summary;
     const l = f.latest;
+    const n = f.snapshots;
     const lines = [
       `${f.name} (${f.id}) — ${f.region}`,
+      `  reporting in ${n.reporting} snapshot(s) · not reporting in ${n.notReporting} · absent from ${n.absent}`,
       `  ${s.samples} samples · occupancy avg ${fmtCell(s.occupancyPctMean, '%')} ` +
         `(min ${fmtCell(s.occupancyPctMin, '%')}, max ${fmtCell(s.occupancyPctMax, '%')}) · ` +
         `waiting avg ${fmtCell(s.waitingForCareMean)} · present avg ${fmtCell(s.totalPresentMean)}`,
@@ -973,6 +1005,9 @@ async function runUrgencesHistorique(values: Record<string, unknown>, positional
     const output =
       resolveFormat(values) === 'json' ? JSON.stringify(report, null, 2) : formatHistoriqueTable(report);
     process.stdout.write(`${output}\n`);
+    if (report.window.coverage.gaps.length > 0) {
+      process.stderr.write(`note: the window has gaps with no archived snapshot; ${historiqueCoverageLine(report)}\n`);
+    }
     return 0;
   } catch (err) {
     if (err instanceof UsageError) {

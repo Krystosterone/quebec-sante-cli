@@ -35,8 +35,10 @@ and it wins wherever a module disagrees. The essentials:
   today", and this data never decides between a clinic and the ER.
 - **Every answer names its source and the data's time**, flags stale data, and
   keeps MSSS facts, derived values and your reading apart.
-- **State samples and coverage** (history sample counts, missing regions or
-  facilities) before calling something usual, a trend or a total.
+- **State samples and coverage** (history sample counts, archive gaps, missing
+  regions, facilities, dates or periods) before calling something usual, a
+  trend or a total. Every dataset has gaps that come and go; read them from
+  the output each time, never from memory.
 
 ## 2. Pick the module
 
@@ -86,10 +88,11 @@ Questions that are about a decision more than a dataset:
     sample count.
 - **"Has overcrowding worsened over time?"** Fiscal years come from
   `urgences-cumulatif`, which has no occupancy rate (use its strain
-  indicators). Hourly occupancy from `urgences-historique` covers
-  2023-02-01 → 2025-11-01, then 2026-11-05 onward, with nothing in between:
-  compare like periods (`--by day` with a `--days` that reaches back far
-  enough) and check `window.snapshots` first. Say which you used.
+  indicators). Hourly occupancy from `urgences-historique` has gaps, some of
+  them months long: read `archive.gaps` (any call) to see which stretches
+  exist, compare like periods that both have data (`--by day` with a `--days`
+  that reaches back far enough), and check `window.coverage` before quoting
+  either. Say which stretches you used.
 - **ERs and clinics in the same region:** match a clinic's `rssCode` with the
   ER report's `regionCode`. Put them side by side as context, without claiming
   one explains the other, and never as a reason to choose one over the other.

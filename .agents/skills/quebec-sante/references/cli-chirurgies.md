@@ -30,11 +30,12 @@ Specialty keys: `chirurgie_generale`, `chirurgie_orthopedique`,
 
 Exit codes: `0` success · `1` network/HTTP error · `2` structure changed or bad
 usage. Bad usage includes a malformed `--period` or `--periods` entry, a
-period absent from the source (the message lists the latest ones), `--periods`
-with `--years` or `--period`, and an unknown `--specialty` (the message lists
-the keys). With `--years`, an earlier year the source doesn't have is not an
-error: it's listed in `notInSource`. A `--region` that matches nothing is **not** an
-error: `regions` comes back empty.
+`--period` absent from the source (the message lists the latest ones),
+`--periods` none of which the source has, `--periods` with `--years` or
+`--period`, and an unknown `--specialty` (the message lists the keys). MSSS
+can skip a period, so with `--years` or `--periods` a period the source
+doesn't have is not an error: it's listed in `notInSource`. A `--region` that
+matches nothing is **not** an error: `regions` comes back empty.
 
 ## Source
 
@@ -50,9 +51,16 @@ error: `regions` comes back empty.
 ## Output (data contract)
 
 Top level: `source`, `fetchedAt`, `dataDate` (period code), `period`
-(`code`, `fiscalYear`, `number`), `previousPeriod`, `cached`,
-`cacheAgeMinutes`, `availablePeriods` (newest first), `missingRegions`,
-`province`, `regions[]`.
+(`code`, `fiscalYear`, `number`), `previousPeriod`, `missingPeriods`,
+`cached`, `cacheAgeMinutes`, `availablePeriods` (newest first),
+`missingRegions`, `province`, `regions[]`.
+
+- `previousPeriod`: the last period before `dataDate` that the source has,
+  which every delta compares with. `null` for the oldest.
+- `missingPeriods`: the fiscal periods between `previousPeriod` and
+  `dataDate` that the source doesn't have (MSSS didn't publish them), newest
+  first. Usually `[]`. When it isn't, every `deltaFromPreviousPeriod` spans
+  `missingPeriods.length + 1` periods, not one.
 
 Each region (and `province`):
 
@@ -86,13 +94,14 @@ covers a different set of regions.
 
 Top level: `source`, `fetchedAt`, `cached`, `cacheAgeMinutes`,
 `availablePeriods`, `periods` (the codes reported, in order), `notInSource`
-(`--years` only: earlier years' periods the source lacks), `reports[]`.
+(periods asked for that the source lacks: earlier years' with `--years`, any
+listed code with `--periods`; they have no report), `reports[]`.
 
 Each `reports[]` entry is the single-period report above without the shared
 top-level fields: `dataDate`, `period`, `previousPeriod`, `missingRegions`,
 `province`, `regions[]`. It's identical to a `--period` call for that period:
-`missingRegions` and `deltaFromPreviousPeriod` are per period, so check
-coverage in each one before comparing them.
+`missingRegions`, `missingPeriods` and `deltaFromPreviousPeriod` are per
+period, so check coverage in each one before comparing them.
 
 ## Freshness & cache
 

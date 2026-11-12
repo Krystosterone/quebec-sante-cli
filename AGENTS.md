@@ -109,6 +109,11 @@ Setup and credentials: `docs/archive-job.md`. Consequences for agents:
   converting newlines). Don't add derived data there.
 - Code changes never go in `archive/`; data commits never touch anything else.
 - `git log -- . ':(exclude)archive/'` shows history without the data commits.
+- Gaps are permanent: the archive misses hours or days whenever the job
+  stops, and MSSS skips publications. Report them in the output contract
+  (`urgences-historique` `window.coverage` / `archive.gaps`, `cliniques`
+  `window.missingDates`, `chirurgies` `missingPeriods` / `notInSource`); never
+  hardcode gap dates in the skill or docs.
 - Test the job offline with `node --import tsx --test test/archive.test.ts`;
   the history API and command with `test/history.test.ts`. Build the API
   locally with `npx tsx scripts/build-api.ts site` (output is gitignored).

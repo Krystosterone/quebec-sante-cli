@@ -37,7 +37,7 @@ test('--date picks a specific day', async () => {
 
 test('a single date by default: window of 1 day, dates = [that date]', async () => {
   const report = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE });
-  assert.deepEqual(report.window, { from: '2026-08-19', to: '2026-08-19', days: 1 });
+  assert.deepEqual(report.window, { from: '2026-08-19', to: '2026-08-19', days: 1, missingDates: [] });
   assert.deepEqual(report.dates, ['2026-08-19']);
 });
 
@@ -45,7 +45,8 @@ test('--days covers several dates in one call, newest first, ending at --date', 
   const one = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { rls: 'kamouraska', date: '2026-08-18' } });
   const two = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { rls: 'kamouraska', date: '2026-08-19' } });
   const both = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { rls: 'kamouraska', days: 7 } });
-  assert.deepEqual(both.window, { from: '2026-08-13', to: '2026-08-19', days: 7 });
+  const missingDates = ['2026-08-17', '2026-08-16', '2026-08-15', '2026-08-14', '2026-08-13'];
+  assert.deepEqual(both.window, { from: '2026-08-13', to: '2026-08-19', days: 7, missingDates });
   assert.equal(both.dataDate, '2026-08-19');
   assert.deepEqual(both.dates, ['2026-08-19', '2026-08-18']); // only days the source has
   assert.equal(both.clinics.length, one.clinics.length + two.clinics.length);
@@ -57,14 +58,14 @@ test('--days covers several dates in one call, newest first, ending at --date', 
 
 test('--days ending at an earlier --date excludes later dates', async () => {
   const r = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { date: '2026-08-18', days: 2 } });
-  assert.deepEqual(r.window, { from: '2026-08-17', to: '2026-08-18', days: 2 });
+  assert.deepEqual(r.window, { from: '2026-08-17', to: '2026-08-18', days: 2, missingDates: ['2026-08-17'] });
   assert.deepEqual(r.dates, ['2026-08-18']);
   assert.ok(r.clinics.every((c) => c.date === '2026-08-18'));
 });
 
 test('a days window crosses month and year ends', async () => {
   const r = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { date: '2026-03-01', days: 3 } });
-  assert.deepEqual(r.window, { from: '2026-02-27', to: '2026-03-01', days: 3 });
+  assert.deepEqual(r.window, { from: '2026-02-27', to: '2026-03-01', days: 3, missingDates: ['2026-03-01', '2026-02-28', '2026-02-27'] });
   assert.deepEqual(r.dates, []);
   assert.equal(r.clinics.length, 0);
   const y = await fetchCliniquesReport({ fixture: FIXTURE, cache: CACHE, filters: { date: '2026-01-01', days: 2 } });
@@ -159,6 +160,17 @@ test('summary follows the filters and the window', async () => {
   assert.deepEqual(empty.summary, { clinicsWithOffers: 0, byProfessionGroup: [], byClinic: [] });
 });
 
+test('a date MSSS skipped is named in window.missingDates; "every day" means every date in dates', () => {
+  // The source has 10-28 and 10-26 but no row at all for 10-27.
+  const dates = ['2026-10-28', '2026-10-26'];
+  const clinics = [row('2026-10-28', 'A', 'Médecin', { '9h_12h': 2 }), row('2026-10-26', 'A', 'Médecin', { '9h_12h': 1 })];
+  const r = buildCliniquesReport(clinics, dates, { days: 3 }, { cached: false, cacheAgeMinutes: 0 });
+  assert.deepEqual(r.window, { from: '2026-10-26', to: '2026-10-28', days: 3, missingDates: ['2026-10-27'] });
+  assert.deepEqual(r.dates, dates);
+  assert.equal(r.summary.byClinic[0]!.daysWithOffers, 2);
+  assert.equal(r.summary.byProfessionGroup[0]!.clinicsWithOffersEveryDay, 1, 'every published date, not every window day');
+});
+
 test('availableDates keeps the newest 31 dates; availableRange spans the source', () => {
   const dates = Array.from({ length: 40 }, (_, i) => new Date(Date.UTC(2026, 9, 28 - i)).toISOString().slice(0, 10));
   const r = buildCliniquesReport([], dates, {}, { cached: false, cacheAgeMinutes: 0 });
@@ -239,7 +251,7 @@ test('CLI: cliniques --days validates and returns the window', async () => {
   const { stdout, code } = await runCli(['cliniques', '--rls', 'kamouraska', '--days', '7', '--fixture', FIXTURE, '--json']);
   assert.equal(code, 0);
   const report = JSON.parse(stdout);
-  assert.deepEqual(report.window, { from: '2026-08-13', to: '2026-08-19', days: 7 });
+  assert.deepEqual(report.window.missingDates, ['2026-08-17', '2026-08-16', '2026-08-15', '2026-08-14', '2026-08-13']);
   assert.deepEqual(report.dates, ['2026-08-19', '2026-08-18']);
 });
 
@@ -250,6 +262,8 @@ test('CLI: a multi-day table shows a DATE column', async () => {
   assert.match(stdout, /2026-08-18 → 2026-08-19 \(2 days, 2 with data\)/);
   assert.match(stdout, /^Summary over 2 date\(s\) with data/m);
   assert.match(stdout, /^available dates: 2026-08-18 → 2026-08-19 \(2 dates\)$/m);
+  const wider = await runCli(['cliniques', '--rls', 'kamouraska', '--days', '3', '--fixture', FIXTURE, '--table']);
+  assert.match(wider.stdout, /^not in the source: 2026-08-17$/m);
 });
 
 test('CLI: --version of the binary includes both commands in help', async () => {

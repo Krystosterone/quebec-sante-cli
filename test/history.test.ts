@@ -151,6 +151,64 @@ test('window is anchored on the latest snapshot and excludes its lower bound', (
   assert.equal(r.facilities[0]!.summary.samples, 2);
 });
 
+test('coverage: three ranges, the gaps between them, and the leading gap before the first snapshot', () => {
+  const r = report('hour');
+  assert.deepEqual(r.window.coverage, {
+    expectedSnapshots: 28 * 24,
+    ranges: [
+      { from: '2026-08-31T15:45', to: '2026-08-31T15:45', snapshots: 1 },
+      { from: '2026-09-07T15:45', to: '2026-09-07T16:45', snapshots: 2 },
+      { from: '2026-09-08T15:45', to: '2026-09-08T15:45', snapshots: 1 },
+    ],
+    gaps: [
+      { from: '2026-08-11T15:45', to: '2026-08-31T15:45', hours: 480 }, // window.from → first snapshot
+      { from: '2026-08-31T15:45', to: '2026-09-07T15:45', hours: 168 },
+      { from: '2026-09-07T16:45', to: '2026-09-08T15:45', hours: 23 },
+    ],
+  });
+  // The archive-wide gaps come from the index, whatever the window.
+  assert.deepEqual(BUILT.index.datasets.urgences.gaps, r.window.coverage.gaps.slice(1));
+  assert.deepEqual(report('hour', 1).archive, {
+    first: '2026-08-31T15:45',
+    last: '2026-09-08T15:45',
+    snapshots: 4,
+    gaps: r.window.coverage.gaps.slice(1),
+  });
+  // A window inside one range has none; a gap up to 6 h isn't one.
+  const short = buildHistory([version('2026-09-08T08:45', 8), version('2026-09-08T14:45', 8)], { generatedAt: 'x' });
+  assert.deepEqual(short.index.datasets.urgences.gaps, []);
+  const s = buildHistoriqueReport(short.index, short.months, {
+    days: 1, groupBy: 'hour', filters: { ids: [SJ] }, source: 't', fetchedAt: 'now', cached: false,
+  });
+  assert.equal(s.window.coverage.ranges.length, 1);
+  assert.deepEqual(s.window.coverage.gaps, [{ from: '2026-09-07T14:45', to: '2026-09-08T08:45', hours: 18 }]);
+});
+
+test('an API built before gaps existed still reads, with archive.gaps null', () => {
+  const { gaps: _g, ...old } = BUILT.index.datasets.urgences;
+  const index = { ...BUILT.index, datasets: { urgences: old } };
+  const r = buildHistoriqueReport(index, BUILT.months, {
+    days: 28, groupBy: 'hour', filters: { ids: [SJ] }, source: 't', fetchedAt: 'now', cached: false,
+  });
+  assert.equal(r.archive.gaps, null);
+  assert.equal(r.window.coverage.ranges.length, 3);
+});
+
+test('per facility: reporting, not reporting (blank stretcher figures) and absent from the file', () => {
+  const blank = version('2026-09-08T16:45', 0);
+  blank.csv = blank.csv.replace(/(CHU SAINTE-JUSTINE,51222800,)16,0,0,0,/, '$1,,,,');
+  const gone = version('2026-09-08T17:45', 0);
+  gone.csv = gone.csv.split(/\r?\n/).filter((l) => !l.includes(',51222800,')).join('\r\n');
+  const built = buildHistory([...VERSIONS, blank, gone], { generatedAt: 'x' });
+  const r = buildHistoriqueReport(built.index, built.months, {
+    days: 28, groupBy: 'hour', filters: { ids: [SJ] }, source: 't', fetchedAt: 'now', cached: false,
+  });
+  assert.equal(r.window.snapshots, 6);
+  const f = r.facilities[0]!;
+  assert.deepEqual(f.snapshots, { reporting: 4, notReporting: 1, absent: 1 });
+  assert.equal(f.summary.samples, 5, 'samples counts snapshots the facility is listed in');
+});
+
 test('filters: region code, search, ids', () => {
   const mtl = report('hour', 28, { region: '06' } as never);
   assert.ok(mtl.facilities.length > 5);
@@ -173,18 +231,36 @@ test('fixture dir + CLI JSON and table output', async () => {
 
   const out: string[] = [];
   const orig = process.stdout.write.bind(process.stdout);
+  const errOrig = process.stderr.write.bind(process.stderr);
   (process.stdout as { write: unknown }).write = (chunk: string) => (out.push(String(chunk)), true);
+  (process.stderr as { write: unknown }).write = () => true; // the gap note (tested below)
   try {
     assert.equal(await main(['urgences-historique', '--fixture', dir, '--id', SJ, '--json']), 0);
     assert.equal(await main(['urgences-historique', '--fixture', dir, '--id', SJ, '--by', 'weekday-hour', '--table']), 0);
   } finally {
     (process.stdout as { write: unknown }).write = orig;
+    (process.stderr as { write: unknown }).write = errOrig;
   }
   const json = JSON.parse(out[0]!);
   assert.equal(json.groupBy, 'hour');
   assert.equal(json.facilities[0].id, SJ);
+  assert.equal(json.window.coverage.ranges.length, 3);
+  assert.equal(json.archive.gaps.length, 2);
   assert.match(out[1]!, /CHU SAINTE-JUSTINE \(51222800\)/);
   assert.match(out[1]!, /Tue 15h/);
+  assert.match(out[1]!, /^coverage: 4 of 672 hourly snapshots in 3 range\(s\) · gaps over 6 h: 2026-08-11T15:45 → 2026-08-31T15:45 \(480 h\)/m);
+  assert.match(out[1]!, /reporting in 4 snapshot\(s\) · not reporting in 0 · absent from 0/);
+});
+
+test('CLI: a window with a gap writes a note on stderr', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'msss-api-'));
+  writeApi(dir);
+  const r = spawnSync('node', ['--import', 'tsx', 'src/cli.ts', 'urgences-historique', '--fixture', dir, '--id', SJ, '--json'], {
+    encoding: 'utf8',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^note: the window has gaps with no archived snapshot; coverage: 4 of 672/m);
+  assert.equal(JSON.parse(r.stdout).window.coverage.gaps.length, 3);
 });
 
 test('CLI rejects bad --by and --days with exit 2', async () => {
@@ -227,6 +303,16 @@ test('HTTP: caches documents; --refresh re-fetches only the index and the curren
 
     await fetchUrgencesHistoriqueReport({ api, cache: { dir: cacheDir, refresh: true } });
     assert.deepEqual(hits, ['/api/v1/index.json', '/api/v1/urgences/2026-09.json']);
+
+    // A backfill lands a snapshot in the complete month: the index no longer
+    // matches the cached copy, so it is fetched again.
+    const backfilled = buildHistory([version('2026-08-30T15:45', 4), ...VERSIONS], { generatedAt: 'later', archiveCommit: 'def' });
+    writeFileSync(join(dir, 'index.json'), JSON.stringify(backfilled.index));
+    writeFileSync(join(dir, 'urgences', '2026-08.json'), JSON.stringify(backfilled.months[0]));
+    hits.length = 0;
+    const after = await fetchUrgencesHistoriqueReport({ api, cache: { dir: cacheDir, refresh: true } });
+    assert.deepEqual(hits, ['/api/v1/index.json', '/api/v1/urgences/2026-08.json', '/api/v1/urgences/2026-09.json']);
+    assert.equal(after.window.snapshots, 5);
 
     await assert.rejects(
       fetchUrgencesHistoriqueReport({ api: `${api}/missing`, cache: { dir: cacheDir } }),

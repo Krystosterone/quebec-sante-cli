@@ -52,8 +52,8 @@ see [`cli-urgences-cumulatif.md`](cli-urgences-cumulatif.md).
    For "has overcrowding worsened?", use the strain indicators it has (stretcher
    `dmsHours`, `stretcherOver24hPct` / `stretcherOver48hPct`, `pecDelayHours`)
    and say that's what you used. Occupancy history only exists in
-   `urgences-historique`: hourly from 2023-02-01 to 2025-11-01, then from
-   2026-11-05, with nothing in between.
+   `urgences-historique`, hourly, with gaps (some months long) that its
+   `archive.gaps` lists.
 1. **Lower is better** for `dmsHours` (length of stay), `pecDelayHours` (delay
    to first physician assessment), `over24h` / `over48h` and their `%` shares.
    A negative `change` on these is an improvement.

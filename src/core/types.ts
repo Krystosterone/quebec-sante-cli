@@ -307,8 +307,12 @@ export interface CliniquesReport {
    * With a multi-day window, its last day (`window.to`).
    */
   dataDate: string;
-  /** The calendar-day window reported, inclusive. `days` is 1 unless `--days` was given. */
-  window: { from: string; to: string; days: number };
+  /**
+   * The calendar-day window reported, inclusive. `days` is 1 unless `--days`
+   * was given. `missingDates`: its dates the source has no rows for at all,
+   * newest first: MSSS didn't publish them (or not yet, past `availableRange.to`).
+   */
+  window: { from: string; to: string; days: number; missingDates: string[] };
   /** The dates in `window` that the source has rows for (newest first). */
   dates: string[];
   /** True when this report was served from the local cache, false on a live fetch. */
@@ -645,8 +649,18 @@ export interface ChirurgiesReport {
   /** The period code the report is for (the requested one, or the latest present). */
   dataDate: string;
   period: ChirurgiePeriod;
-  /** The period immediately before `dataDate` in the source; null for the oldest. */
+  /**
+   * The period before `dataDate` that the source has (what the deltas compare
+   * with); null for the oldest. Not always the fiscal period just before: see
+   * `missingPeriods`.
+   */
   previousPeriod: string | null;
+  /**
+   * Fiscal periods between `previousPeriod` and `dataDate` that the source
+   * doesn't have (MSSS didn't publish them), newest first. Non-empty means
+   * every `deltaFromPreviousPeriod` spans `missingPeriods.length + 1` periods.
+   */
+  missingPeriods: string[];
   /** True when this report was served from the local cache, false on a live fetch. */
   cached: boolean;
   /** Cache-freshness: age of the served data in minutes. */
@@ -679,8 +693,9 @@ export interface ChirurgiesMultiReport {
   /** The period codes reported, in the order of `reports`. */
   periods: string[];
   /**
-   * With `--years`: the same period of earlier fiscal years that the source
-   * doesn't have. Empty otherwise.
+   * Periods asked for that the source doesn't have: with `--years`, the same
+   * period of an earlier fiscal year; with `--periods`, any listed code. They
+   * have no entry in `reports`.
    */
   notInSource: string[];
   reports: ChirurgiesPeriodReport[];
